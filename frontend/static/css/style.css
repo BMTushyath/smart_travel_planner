@@ -86,7 +86,7 @@ a:hover {
 .dashboard-grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
-    gap: 2rem;
+    gap: 1.25rem;
 }
 
 /* Cards */
@@ -94,7 +94,7 @@ a:hover {
     background: var(--card-bg);
     border: 1px solid var(--glass-border);
     border-radius: 1rem;
-    padding: 1.5rem;
+    padding: 1rem;
     backdrop-filter: blur(12px);
     box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
     transition: transform 0.4s cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 0.4s ease, border-color 0.4s ease;
@@ -121,13 +121,13 @@ a:hover {
 .card-header {
     display: flex;
     align-items: center;
-    margin-bottom: 1rem;
-    padding-bottom: 1rem;
+    margin-bottom: 0.75rem;
+    padding-bottom: 0.75rem;
     border-bottom: 1px solid var(--glass-border);
 }
 
 .card-header h3 {
-    font-size: 1.25rem;
+    font-size: 1.15rem;
     color: var(--text-primary);
     display: flex;
     align-items: center;
@@ -140,8 +140,8 @@ a:hover {
 
 .card-desc {
     color: var(--text-secondary);
-    font-size: 0.9rem;
-    margin-bottom: 1.5rem;
+    font-size: 0.85rem;
+    margin-bottom: 1rem;
 }
 
 /* Forms */
@@ -152,7 +152,7 @@ a:hover {
 input,
 select {
     width: 100%;
-    padding: 0.75rem;
+    padding: 0.6rem;
     background: rgba(255, 255, 255, 0.8);
     border: 1px solid var(--glass-border);
     border-radius: 0.5rem;
@@ -160,7 +160,7 @@ select {
     font-family: var(--font-family);
     transition: border-color 0.2s, box-shadow 0.2s;
     box-sizing: border-box;
-    /* Fix padding issue */
+    font-size: 0.9rem;
 }
 
 input:focus,
@@ -172,13 +172,14 @@ select:focus {
 
 button {
     width: 100%;
-    padding: 0.75rem;
+    padding: 0.65rem;
     border: none;
     border-radius: 0.5rem;
     font-weight: 600;
     cursor: pointer;
     transition: opacity 0.2s;
     font-family: var(--font-family);
+    font-size: 0.9rem;
 }
 
 button:hover {
@@ -205,7 +206,7 @@ button:hover {
     display: flex;
     gap: 0.5rem;
     align-items: center;
-    margin-bottom: 1rem;
+    margin-bottom: 0.75rem;
 }
 
 .time-inputs span {
@@ -269,9 +270,20 @@ button:hover {
     margin-bottom: 0.5rem;
 }
 
-.level-low { background: #dcfce7; color: #166534; }
-.level-medium { background: #fef9c3; color: #854d0e; }
-.level-high { background: #fee2e2; color: #991b1b; }
+.level-low {
+    background: #dcfce7;
+    color: #166534;
+}
+
+.level-medium {
+    background: #fef9c3;
+    color: #854d0e;
+}
+
+.level-high {
+    background: #fee2e2;
+    color: #991b1b;
+}
 
 .traffic-reason {
     font-size: 0.95rem;
@@ -295,14 +307,15 @@ button:hover {
 }
 
 /* Planner Card Cleanup */
-.planner-card .map-container.hidden + .result-box,
-.planner-card .map-container:empty + .result-box {
+.planner-card .map-container.hidden+.result-box,
+.planner-card .map-container:empty+.result-box {
     margin-top: 0;
 }
 
 .planner-card .map-container {
     margin-top: 0.5rem;
-    height: 150px; /* Reduced height for calculation info */
+    height: 150px;
+    /* Reduced height for calculation info */
 }
 
 .msg-box {
@@ -340,6 +353,7 @@ button:hover {
 .vehicle-list li {
     display: flex;
     justify-content: space-between;
+    align-items: center;
     padding: 0.5rem;
     border-bottom: 1px solid var(--glass-border);
     font-size: 0.9rem;
@@ -347,6 +361,12 @@ button:hover {
 
 .vehicle-list li:last-child {
     border-bottom: none;
+}
+
+.v-info {
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
 }
 
 .v-name {
@@ -358,13 +378,35 @@ button:hover {
     font-size: 0.8rem;
 }
 
+.btn-delete-vehicle {
+    width: auto;
+    padding: 0.35rem 0.5rem;
+    background: transparent;
+    color: var(--accent-danger);
+    border: 1px solid transparent;
+    border-radius: 0.4rem;
+    cursor: pointer;
+    font-size: 0.85rem;
+    transition: all 0.2s ease;
+    flex-shrink: 0;
+}
+
+.btn-delete-vehicle:hover {
+    background: #fee2e2;
+    border-color: #fca5a5;
+    opacity: 1;
+}
+
 /* Map */
 .map-container {
-    height: 300px;
+    height: 100px;
     width: 100%;
     border-radius: 0.5rem;
-    margin-top: 1rem;
+    margin-top: 0.75rem;
     border: 1px solid var(--glass-border);
+    display: flex;
+    align-items: center;
+    justify-content: center;
 }
 
 /* Login Page */
@@ -400,4 +442,198 @@ button:hover {
 
 .auth-toggle span:hover {
     text-decoration: underline;
+}
+
+/* Weather Engine Card */
+.weather-card {
+    background: linear-gradient(135deg, #bae6fd 0%, #ffffff 100%);
+    border-left: 5px solid #f59e0b;
+}
+
+.weather-image-wrapper {
+    margin-bottom: 0.75rem;
+}
+
+.weather-image {
+    width: 65px;
+    height: 65px;
+    object-fit: contain;
+    border-radius: 0.75rem;
+    filter: drop-shadow(0 4px 6px rgba(0, 0, 0, 0.1));
+}
+
+.weather-emoji {
+    font-size: 1.5rem;
+    margin-bottom: 0.25rem;
+}
+
+.weather-condition-badge {
+    display: inline-block;
+    padding: 0.2rem 0.75rem;
+    border-radius: 1rem;
+    font-weight: 700;
+    font-size: 0.8rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: 0.5rem;
+}
+
+.weather-sunny {
+    background: #fef3c7;
+    color: #92400e;
+}
+
+.weather-pleasant {
+    background: #dcfce7;
+    color: #166534;
+}
+
+.weather-cold {
+    background: #dbeafe;
+    color: #1e40af;
+}
+
+.weather-rainy {
+    background: #e0e7ff;
+    color: #3730a3;
+}
+
+.weather-windy {
+    background: #fee2e2;
+    color: #991b1b;
+}
+
+.weather-stats {
+    display: flex;
+    justify-content: center;
+    gap: 1rem;
+    margin: 0.75rem 0;
+    padding: 0.5rem;
+    background: rgba(255, 255, 255, 0.6);
+    border-radius: 0.75rem;
+    border: 1px solid var(--glass-border);
+}
+
+.weather-stat {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.weather-stat i {
+    color: var(--accent-primary);
+    font-size: 1rem;
+}
+
+.weather-message {
+    margin-top: 0.75rem;
+    padding: 0.75rem 1rem;
+    border-radius: 0.75rem;
+    font-weight: 600;
+    font-size: 0.95rem;
+    line-height: 1.4;
+    animation: fadeInUp 0.5s ease;
+}
+
+.weather-sunny-msg {
+    background: #fffbeb;
+    color: #92400e;
+    border: 1px solid #fcd34d;
+}
+
+.weather-pleasant-msg {
+    background: #f0fdf4;
+    color: #166534;
+    border: 1px solid #86efac;
+}
+
+.weather-cold-msg {
+    background: #eff6ff;
+    color: #1e40af;
+    border: 1px solid #93c5fd;
+}
+
+.weather-rainy-msg {
+    background: #eef2ff;
+    color: #3730a3;
+    border: 1px solid #a5b4fc;
+}
+
+.weather-windy-msg {
+    background: #fef2f2;
+    color: #991b1b;
+    border: 1px solid #fca5a5;
+}
+
+.weather-meta {
+    margin-top: 0.75rem;
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+    font-style: italic;
+}
+
+@keyframes fadeInUp {
+    from {
+        opacity: 0;
+        transform: translateY(10px);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+/* LAPS Card Styles */
+.laps-card {
+    background: linear-gradient(135deg, #e0f2fe 0%, #ffffff 100%);
+    border-left: 5px solid var(--accent-secondary);
+}
+
+.laps-display {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+}
+
+.laps-hour-item {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    padding: 0.5rem;
+    background: rgba(255, 255, 255, 0.5);
+    border-radius: 0.5rem;
+    border: 1px solid var(--glass-border);
+}
+
+.laps-time {
+    font-size: 0.85rem;
+    font-weight: 700;
+    color: var(--text-primary);
+    width: 50px;
+    flex-shrink: 0;
+}
+
+.laps-bar-container {
+    flex-grow: 1;
+    height: 8px;
+    background: rgba(0, 0, 0, 0.1);
+    border-radius: 4px;
+    overflow: hidden;
+}
+
+.laps-bar {
+    height: 100%;
+    transition: width 0.5s ease;
+}
+
+.laps-score {
+    font-size: 0.85rem;
+    font-weight: 800;
+    width: 40px;
+    text-align: right;
+    flex-shrink: 0;
 }

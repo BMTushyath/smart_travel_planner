@@ -21,7 +21,7 @@ else:
 
 from config import Config
 from models import db, User, Vehicle, Trip
-from services import FuelService, TomTomTrafficService
+from services import FuelService, TomTomTrafficService, WeatherService
 
 app = Flask(__name__, template_folder='../frontend/templates', static_folder='../frontend/static')
 app.config.from_object(Config)
@@ -32,6 +32,7 @@ fuel_service = FuelService(app.config.get('FUEL_API_KEY'))
 # ml_service = MLService() # Deprecated
 
 tomtom_service = TomTomTrafficService(app.config.get('TOMTOM_API_KEY'))
+weather_service = WeatherService()
 
 with app.app_context():
     db.create_all()
@@ -104,6 +105,19 @@ def vehicle_handler():
         } for v in vehicles]
         return jsonify(vehicle_list)
 
+@app.route('/api/vehicle/<int:vehicle_id>', methods=['DELETE'])
+def delete_vehicle(vehicle_id):
+    if 'user_id' not in session:
+        return jsonify({'error': 'Unauthorized'}), 401
+    
+    vehicle = Vehicle.query.get(vehicle_id)
+    if not vehicle or vehicle.user_id != session['user_id']:
+        return jsonify({'error': 'Vehicle not found'}), 404
+    
+    db.session.delete(vehicle)
+    db.session.commit()
+    return jsonify({'message': 'Vehicle deleted'})
+
 @app.route('/api/calculate_trip', methods=['POST'])
 def calculate_trip():
     if 'user_id' not in session:
@@ -154,20 +168,32 @@ def smart_plan():
     end_hour = int(data['end_hour'])
     origin = data.get('origin')
     destination = data.get('destination')
+    target_date = data.get('date')
     
     if not origin or not destination:
          return jsonify({'error': 'Missing origin or destination for prediction'}), 400
 
-    best_hour, avg_speed, traffic_level = tomtom_service.find_best_departure_time(origin, destination, start_hour, end_hour)
+    best_hour, avg_speed, traffic_level = tomtom_service.find_best_departure_time(origin, destination, start_hour, end_hour, target_date=target_date)
     
     if best_hour is None:
         return jsonify({'message': 'Could not calculate best time.'}), 400
 
     # Get route details for the current traffic (at the start_hour)
+    selected_date = None
+    if target_date:
+        try:
+            selected_date = datetime.strptime(target_date, "%Y-%m-%d").date()
+        except:
+            selected_date = None
+
     now = datetime.now()
-    check_time = now.replace(hour=start_hour, minute=0, second=0, microsecond=0)
-    if check_time < now:
-        check_time += timedelta(days=1)
+    if selected_date:
+        check_time = datetime.combine(selected_date, datetime.min.time()).replace(hour=start_hour)
+    else:
+        check_time = now.replace(hour=start_hour, minute=0, second=0, microsecond=0)
+        if check_time < now:
+            check_time += timedelta(days=1)
+            
     depart_at = check_time.strftime("%Y-%m-%dT%H:%M:%S")
     
     # Request alternatives to skip traffic
@@ -227,6 +253,51 @@ def traffic():
     if not origin or not destination:
         return jsonify({'error': 'Missing origin or destination'}), 400
     result = tomtom_service.get_traffic(origin, destination)
+    return jsonify(result)
+
+@app.route('/api/weather', methods=['POST'])
+def weather():
+    if 'user_id' not in session:
+        return jsonify({'error': 'Unauthorized'}), 401
+    data = request.json
+    origin = data.get('origin')
+    destination = data.get('destination')
+    start_hour = int(data.get('start_hour', 8))
+    end_hour = int(data.get('end_hour', 18))
+    target_date = data.get('date')  # Optional: YYYY-MM-DD
+
+    if not destination:
+        return jsonify({'error': 'Missing destination'}), 400
+
+    # Geocode destination to get lat/lon
+    coords = tomtom_service._geocode(destination)
+    if not coords:
+        return jsonify({'error': f'Could not find location: {destination}'}), 400
+
+    result = weather_service.get_forecast(coords['lat'], coords['lon'], start_hour, end_hour, target_date=target_date)
+    if 'error' in result:
+        return jsonify(result), 400
+
+    return jsonify(result)
+
+@app.route('/api/laps', methods=['POST'])
+def laps():
+    if 'user_id' not in session:
+        return jsonify({'error': 'Unauthorized'}), 401
+    data = request.json
+    origin = data.get('origin')
+    destination = data.get('destination')
+    start_hour = int(data.get('start_hour', 8))
+    end_hour = int(data.get('end_hour', 18))
+    target_date = data.get('date')
+
+    if not origin or not destination:
+        return jsonify({'error': 'Missing origin or destination'}), 400
+
+    result = tomtom_service.calculate_laps(origin, destination, start_hour, end_hour, target_date=target_date)
+    if isinstance(result, dict) and 'error' in result:
+        return jsonify(result), 400
+    
     return jsonify(result)
 
 @app.route('/logout')

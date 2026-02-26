@@ -72,8 +72,13 @@ async function loadVehicles() {
             if (listContainer) {
                 listContainer.innerHTML = vehicles.map(v => `
                     <li>
-                        <span class="v-name">${v.name}</span>
-                        <span class="v-details">${v.mileage} ${v.type === 'ev' ? 'km/kWh' : 'km/l'} (${v.type.toUpperCase()})</span>
+                        <div class="v-info">
+                            <span class="v-name">${v.name}</span>
+                            <span class="v-details">${v.mileage} ${v.type === 'ev' ? 'km/kWh' : 'km/l'} (${v.type.toUpperCase()})</span>
+                        </div>
+                        <button type="button" class="btn-delete-vehicle" data-id="${v.id}" title="Delete vehicle">
+                            <i class="fas fa-trash-alt"></i>
+                        </button>
                     </li>
                 `).join('');
             }
@@ -93,6 +98,18 @@ async function loadVehicles() {
 // Call loadVehicles on page load if on dashboard
 if (document.getElementById('vehicle-list')) {
     loadVehicles();
+
+    // Event Delegation for Delete Buttons
+    const listContainer = document.getElementById('vehicle-list');
+    if (listContainer) {
+        listContainer.addEventListener('click', (e) => {
+            const deleteBtn = e.target.closest('.btn-delete-vehicle');
+            if (deleteBtn) {
+                const vehicleId = deleteBtn.getAttribute('data-id');
+                deleteVehicle(vehicleId);
+            }
+        });
+    }
 }
 
 // Vehicle Form
@@ -126,6 +143,26 @@ if (vehicleForm) {
     });
 }
 
+// Delete Vehicle
+async function deleteVehicle(vehicleId) {
+    if (!confirm('Are you sure you want to delete this vehicle?')) return;
+
+    try {
+        const res = await fetch(`/api/vehicle/${vehicleId}`, {
+            method: 'DELETE'
+        });
+        const data = await res.json();
+        if (res.ok) {
+            loadVehicles(); // Refresh list and dropdown
+        } else {
+            alert(data.error || 'Failed to delete vehicle');
+        }
+    } catch (err) {
+        console.error(err);
+        alert('Error deleting vehicle');
+    }
+}
+
 
 
 // Plan Your Trip Logic
@@ -135,6 +172,7 @@ if (plannerForm) {
         e.preventDefault();
         const start = document.getElementById('plan-start-loc').value;
         const end = document.getElementById('plan-end-loc').value;
+        const planDate = document.getElementById('plan-date').value;
         const startTime = document.getElementById('plan-start-time').value;
         const endTime = document.getElementById('plan-end-time').value;
 
@@ -167,7 +205,10 @@ if (plannerForm) {
                     mapEl.style.display = 'block';
                 }
 
-                await fetchPrediction(startTime, endTime, distanceText, durationText, start, end);
+                await fetchPrediction(startTime, endTime, distanceText, durationText, start, end, planDate);
+                // Also fetch weather and LAPS for the travel window
+                await fetchWeather(start, end, startTime, endTime, planDate);
+                await fetchLAPS(start, end, startTime, endTime, planDate);
             } else {
                 alert(routeData.error || "Failed to calculate route");
             }
@@ -178,7 +219,7 @@ if (plannerForm) {
     });
 }
 
-async function fetchPrediction(startTime, endTime, distanceText, durationText, start, end) {
+async function fetchPrediction(startTime, endTime, distanceText, durationText, start, end, date) {
     // 2. Get Best Time Prediction and Traffic Alerts from Backend
     try {
         const res = await fetch('/api/smart_plan', {
@@ -188,7 +229,8 @@ async function fetchPrediction(startTime, endTime, distanceText, durationText, s
                 start_hour: startTime,
                 end_hour: endTime,
                 origin: start,
-                destination: end
+                destination: end,
+                date: date
             })
         });
         const data = await res.json();
@@ -225,13 +267,14 @@ async function fetchPrediction(startTime, endTime, distanceText, durationText, s
             trafficCard.classList.remove('hidden');
             trafficCard.style.display = 'block';
 
-            const levelClass = `level-${data.traffic_level.toLowerCase()}`;
+            const trafficLevel = data.traffic_level || "Low";
+            const levelClass = `level-${trafficLevel.toLowerCase()}`;
 
             // Build Optimal Route HTML
             let routeInfoHtml = `
                 <div class="traffic-alt">
                     <strong><i class="fas fa-check-circle"></i> Optimal Route Selected</strong><br>
-                    <span>Via: ${data.via_point}</span>
+                    <span>Via: ${data.via_point || 'Primary Route'}</span>
                 </div>
             `;
 
@@ -249,12 +292,12 @@ async function fetchPrediction(startTime, endTime, distanceText, durationText, s
             trafficContent.innerHTML = `
                 <div class="traffic-alert-item" style="text-align: center;">
                     <div style="font-weight: 600; color: var(--accent-secondary); margin-bottom: 0.25rem;">Suggested time to start</div>
-                    <div style="font-size: 1.5rem; font-weight: 700;">${data.best_alt_time}</div>
-                    <div style="font-size: 0.9rem; color: var(--text-secondary); margin-bottom: 1rem;">Avg Speed: ${data.best_alt_speed} km/h</div>
+                    <div style="font-size: 1.5rem; font-weight: 700;">${data.best_alt_time || 'N/A'}</div>
+                    <div style="font-size: 0.9rem; color: var(--text-secondary); margin-bottom: 1rem;">Avg Speed: ${data.best_alt_speed || 0} km/h</div>
                     
-                    <span class="traffic-level ${levelClass}">${data.traffic_level} Traffic</span>
+                    <span class="traffic-level ${levelClass}">${trafficLevel} Traffic</span>
                     
-                    <div class="traffic-reason" style="margin-top: 0.5rem; font-style: italic; font-size: 0.85rem;">${data.reason}</div>
+                    <div class="traffic-reason" style="margin-top: 0.5rem; font-style: italic; font-size: 0.85rem;">${data.reason || 'Normal traffic expected.'}</div>
                     
                     <div style="text-align: left; margin-top: 1rem;">
                         ${routeInfoHtml}
@@ -277,6 +320,143 @@ async function fetchPrediction(startTime, endTime, distanceText, durationText, s
 
     } catch (err) {
         console.error(err);
+    }
+}
+
+// Weather Engine Logic
+async function fetchWeather(start, end, startTime, endTime, date) {
+    try {
+        const res = await fetch('/api/weather', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                origin: start,
+                destination: end,
+                start_hour: startTime,
+                end_hour: endTime,
+                date: date
+            })
+        });
+        const data = await res.json();
+        console.log("Weather Data:", data);
+
+        const weatherCard = document.getElementById('weather-engine-card');
+        const weatherContent = document.getElementById('weather-engine-content');
+
+        if (!weatherCard || !weatherContent) return;
+
+        if (!res.ok || data.error) {
+            weatherContent.innerHTML = `<div class="loader-placeholder">Could not fetch weather data.</div>`;
+            return;
+        }
+
+        weatherCard.classList.remove('hidden');
+        weatherCard.style.display = 'block';
+
+        const condClass = `weather-${data.condition}`;
+        const imagePath = `/static/images/${data.image}`;
+
+        weatherContent.innerHTML = `
+            <div class="weather-display" style="text-align: center;">
+                <div class="weather-image-wrapper">
+                    <img src="${imagePath}" alt="${data.label}" class="weather-image" onerror="this.style.display='none'">
+                </div>
+                <div class="weather-emoji">${data.emoji}</div>
+                <span class="weather-condition-badge ${condClass}">${data.label}</span>
+                
+                <div class="weather-stats">
+                    <div class="weather-stat">
+                        <i class="fas fa-thermometer-half"></i>
+                        <span>${data.temperature}°C</span>
+                    </div>
+                    <div class="weather-stat">
+                        <i class="fas fa-wind"></i>
+                        <span>${data.wind_speed} km/h</span>
+                    </div>
+                    <div class="weather-stat">
+                        <i class="fas fa-tint"></i>
+                        <span>${data.humidity}%</span>
+                    </div>
+                </div>
+
+                <div class="weather-message ${condClass}-msg">
+                    ${data.emoji} ${data.message}
+                </div>
+
+                <div class="weather-meta">
+                    Based on ${data.hours_analyzed} hours of forecast data
+                </div>
+            </div>
+        `;
+
+        // Color accent the card border
+        const borderColors = {
+            sunny: '#f59e0b',
+            pleasant: '#22c55e',
+            cold: '#3b82f6',
+            rainy: '#6366f1',
+            windy: '#ef4444'
+        };
+        weatherCard.style.borderLeftColor = borderColors[data.condition] || 'var(--accent-primary)';
+
+    } catch (err) {
+        console.error("Weather fetch error:", err);
+    }
+}
+
+// LAPS (Late Arrival Probability Score) Logic
+async function fetchLAPS(start, end, startTime, endTime, date) {
+    try {
+        const res = await fetch('/api/laps', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                origin: start,
+                destination: end,
+                start_hour: startTime,
+                end_hour: endTime,
+                date: date
+            })
+        });
+        const data = await res.json();
+        console.log("LAPS Data:", data);
+
+        const lapsCard = document.getElementById('laps-card');
+        const lapsContent = document.getElementById('laps-content');
+
+        if (!lapsCard || !lapsContent) return;
+
+        if (!res.ok || data.error) {
+            lapsContent.innerHTML = `<div class="loader-placeholder">Could not fetch LAPS data.</div>`;
+            return;
+        }
+
+        lapsCard.classList.remove('hidden');
+        lapsCard.style.display = 'block';
+
+        let lapsHtml = `<div class="laps-display">`;
+
+        data.forEach(item => {
+            let riskColor = '#22c55e'; // Green
+            if (item.risk > 30) riskColor = '#fbbf24'; // Yellow
+            if (item.risk > 70) riskColor = '#ef4444'; // Red
+
+            lapsHtml += `
+                <div class="laps-hour-item">
+                    <div class="laps-time">${item.time_label}</div>
+                    <div class="laps-bar-container">
+                        <div class="laps-bar" style="width: ${item.risk}%; background-color: ${riskColor};"></div>
+                    </div>
+                    <div class="laps-score" style="color: ${riskColor}">${item.risk}%</div>
+                </div>
+            `;
+        });
+
+        lapsHtml += `</div>`;
+        lapsContent.innerHTML = lapsHtml;
+
+    } catch (err) {
+        console.error("LAPS fetch error:", err);
     }
 }
 

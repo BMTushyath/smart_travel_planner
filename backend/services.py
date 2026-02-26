@@ -9,26 +9,37 @@ import os
 class FuelService:
     def __init__(self, api_key=None):
         self.api_key = api_key
-        self.base_url = "https://api.fuelprice.io/v1/india" # Example URL
+        self.base_url = "https://api.fuelprice.io/v1/india"  # Primary API
+        self._cached_prices = None
 
     def get_fuel_prices(self, city="Delhi"):
+        # Try real API first
         if self.api_key and self.api_key != 'PLACEHOLDER_FUEL_KEY':
             try:
-                # Using a generic endpoint for demonstration; replace with actual if known
-                # For now, we'll try to use the base_url if it looks real, otherwise fallback
-                response = requests.get(f"{self.base_url}/{city}", headers={"Authorization": self.api_key})
+                response = requests.get(
+                    f"{self.base_url}/{city}",
+                    headers={"Authorization": self.api_key},
+                    timeout=5
+                )
                 if response.status_code == 200:
-                    return response.json()
+                    data = response.json()
+                    if data:
+                        self._cached_prices = data
+                        return data
             except:
                 pass
-        
-        # Return realistic defaults/mock data
-        # Prices in INR
+
+        # Return cached prices if we had a successful call before
+        if self._cached_prices:
+            return self._cached_prices
+
+        # Fallback: current average Indian fuel prices (fixed, not random)
+        # These are approximate real market rates as of Feb 2026
         return {
-            "petrol": round(random.uniform(94, 102), 2),
-            "diesel": round(random.uniform(85, 92), 2),
-            "cng": round(random.uniform(70, 80), 2),
-            "ev": round(random.uniform(8, 12), 2) # Cost per kWh
+            "petrol": 104.61,
+            "diesel": 92.27,
+            "cng": 76.59,
+            "ev": 9.50  # Cost per kWh
         }
 
 class TomTomTrafficService:
@@ -198,7 +209,7 @@ class TomTomTrafficService:
         except:
             return None
 
-    def find_best_departure_time(self, origin, destination, start_hour, end_hour):
+    def find_best_departure_time(self, origin, destination, start_hour, end_hour, target_date=None):
         """
         Find the best departure time using real TomTom Routing API traffic predictions.
         """
@@ -213,8 +224,16 @@ class TomTomTrafficService:
         best_hour = None
         min_travel_time = float('inf')
         best_avg_speed = 0
-        current_traffic_level = "Low"
+        current_traffic_level = "Low" # Initialize default
         
+        # Parse target_date if provided
+        selected_date = None
+        if target_date:
+            try:
+                selected_date = datetime.strptime(target_date, "%Y-%m-%d").date()
+            except:
+                selected_date = None
+
         now = datetime.now()
         hours_to_check = []
         if end_hour >= start_hour:
@@ -223,12 +242,15 @@ class TomTomTrafficService:
              hours_to_check = range(start_hour, 24)
         
         for hour in hours_to_check:
-            check_time = now.replace(hour=hour, minute=0, second=0, microsecond=0)
-            if check_time < now:
-                check_time += timedelta(days=1)
+            if selected_date:
+                check_time = datetime.combine(selected_date, datetime.min.time()).replace(hour=hour)
+            else:
+                check_time = now.replace(hour=hour, minute=0, second=0, microsecond=0)
+                if check_time < now:
+                    check_time += timedelta(days=1)
                 
             depart_at = check_time.strftime("%Y-%m-%dT%H:%M:%S")
-            url = f"https://api.tomtom.com/routing/1/calculateRoute/{locations}/json?key={self.api_key}&traffic=true&computeTravelTimeFor=all"
+            url = f"https://api.tomtom.com/routing/1/calculateRoute/{locations}/json?key={self.api_key}&traffic=true&departAt={depart_at}&computeTravelTimeFor=all"
             
             try:
                 resp = requests.get(url, timeout=5)
@@ -258,3 +280,266 @@ class TomTomTrafficService:
                 continue
                 
         return best_hour, best_avg_speed, current_traffic_level
+
+    def calculate_laps(self, origin, destination, start_hour, end_hour, target_date=None):
+        """
+        Calculate Late Arrival Probability Score (%) for each hour in the window.
+        Risk is derived from the TomTom delay ratio.
+        """
+        start_coords = self._geocode(origin)
+        end_coords = self._geocode(destination)
+        
+        if not start_coords or not end_coords:
+            return {"error": "Invalid locations"}
+
+        locations = f"{start_coords['lat']},{start_coords['lon']}:{end_coords['lat']},{end_coords['lon']}"
+        
+        # Parse target_date if provided
+        selected_date = None
+        if target_date:
+            try:
+                selected_date = datetime.strptime(target_date, "%Y-%m-%d").date()
+            except:
+                selected_date = None
+
+        now = datetime.now()
+        hours_to_check = []
+        if end_hour >= start_hour:
+             hours_to_check = range(start_hour, end_hour + 1)
+        else:
+             hours_to_check = range(start_hour, 24)
+        
+        results = []
+        for hour in hours_to_check:
+            if selected_date:
+                check_time = datetime.combine(selected_date, datetime.min.time()).replace(hour=hour)
+            else:
+                check_time = now.replace(hour=hour, minute=0, second=0, microsecond=0)
+                if check_time < now:
+                    check_time += timedelta(days=1)
+                
+            depart_at = check_time.strftime("%Y-%m-%dT%H:%M:%S")
+            url = f"https://api.tomtom.com/routing/1/calculateRoute/{locations}/json?key={self.api_key}&traffic=true&departAt={depart_at}&computeTravelTimeFor=all"
+            
+            try:
+                resp = requests.get(url, timeout=5)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    routes = data.get("routes", [])
+                    if routes:
+                        summary = routes[0].get("summary", {})
+                        travel_time = summary.get("travelTimeInSeconds", 0)
+                        no_traffic_time = summary.get("noTrafficTravelTimeInSeconds", 0)
+                        
+                        if no_traffic_time > 0:
+                            delay_ratio = travel_time / no_traffic_time
+                            # Risk mapping:
+                            # 1.0 ratio -> 0% risk
+                            # 1.5 ratio -> 50% risk
+                            # 2.0+ ratio -> 90-100% risk
+                            risk = max(0, min(100, round((delay_ratio - 1) * 100 * 1.5)))
+                        else:
+                            risk = 0
+                        
+                        # 12-hour format label
+                        period = "AM" if hour < 12 else "PM"
+                        h12 = hour % 12
+                        if h12 == 0: h12 = 12
+                        time_label = f"{h12} {period}"
+
+                        results.append({
+                            "hour": hour,
+                            "time_label": time_label,
+                            "risk": risk
+                        })
+            except:
+                continue
+        
+        return results
+
+
+class WeatherService:
+    """
+    Uses the free Open-Meteo API (no API key required) to get weather forecasts.
+    https://open-meteo.com/
+    """
+    BASE_URL = "https://api.open-meteo.com/v1/forecast"
+
+    # WMO Weather Codes mapping
+    WMO_CONDITIONS = {
+        # Sunny / Clear
+        0: "sunny", 1: "sunny",
+        # Partly cloudy / overcast (treat as mild/sunny)
+        2: "sunny", 3: "sunny",
+        # Fog
+        45: "cold", 48: "cold",
+        # Drizzle
+        51: "rainy", 53: "rainy", 55: "rainy",
+        56: "rainy", 57: "rainy",
+        # Rain
+        61: "rainy", 63: "rainy", 65: "rainy",
+        66: "rainy", 67: "rainy",
+        # Snow (cold)
+        71: "cold", 73: "cold", 75: "cold", 77: "cold",
+        # Showers
+        80: "rainy", 81: "rainy", 82: "rainy",
+        # Snow showers
+        85: "cold", 86: "cold",
+        # Thunderstorm
+        95: "windy", 96: "windy", 99: "windy",
+    }
+
+    CONDITION_MESSAGES = {
+        "sunny": {
+            "emoji": "☀️",
+            "label": "Sunny",
+            "message": "Sun might drain your energy",
+            "image": "sunny.webp"
+        },
+        "pleasant": {
+            "emoji": "🌤️",
+            "label": "Pleasant",
+            "message": "Perfect weather to hit the road! Enjoy the ride 🎉",
+            "image": "pleasant.webp"
+        },
+        "cold": {
+            "emoji": "🥶",
+            "label": "Cold",
+            "message": "You might become a freezing block of ice",
+            "image": "cold.webp"
+        },
+        "rainy": {
+            "emoji": "🌧️",
+            "label": "Rainy",
+            "message": "You might soak in rain, not the ideal weather to travel maybe",
+            "image": "rainy.webp"
+        },
+        "windy": {
+            "emoji": "🌪️",
+            "label": "Windy / Stormy",
+            "message": "Strong winds ahead! Hold onto your steering wheel tight",
+            "image": "windy.webp"
+        }
+    }
+
+    def get_forecast(self, lat, lon, start_hour, end_hour, target_date=None):
+        """
+        Get weather forecast for a location and time window.
+        target_date: optional "YYYY-MM-DD" string for a specific date (up to 16 days ahead).
+        Returns dict with condition, temperature, message, image, etc.
+        """
+        try:
+            now = datetime.now()
+            
+            # Calculate how many forecast days we need
+            forecast_days = 2
+            selected_date = None
+            if target_date:
+                try:
+                    selected_date = datetime.strptime(target_date, "%Y-%m-%d").date()
+                    days_ahead = (selected_date - now.date()).days
+                    forecast_days = max(3, min(days_ahead + 2, 16))  # Open-Meteo supports up to 16 days with extra cushion
+                except:
+                    selected_date = None
+            
+            params = {
+                "latitude": lat,
+                "longitude": lon,
+                "hourly": "temperature_2m,weather_code,wind_speed_10m,relative_humidity_2m",
+                "forecast_days": forecast_days,
+                "timezone": "auto"
+            }
+            resp = requests.get(self.BASE_URL, params=params, timeout=10)
+            resp.raise_for_status()
+            data = resp.json()
+
+            hourly = data.get("hourly", {})
+            times = hourly.get("time", [])
+            temps = hourly.get("temperature_2m", [])
+            codes = hourly.get("weather_code", [])
+            winds = hourly.get("wind_speed_10m", [])
+            humidity = hourly.get("relative_humidity_2m", [])
+
+            if not times:
+                return {"error": "No forecast data available"}
+
+            # Filter hours based on target date or auto-detect
+            filtered_indices = []
+            
+            if selected_date:
+                # Use the specific selected date
+                for i, t in enumerate(times):
+                    try:
+                        dt = datetime.strptime(t, "%Y-%m-%dT%H:%M")
+                        if dt.date() == selected_date and start_hour <= dt.hour <= end_hour:
+                            filtered_indices.append(i)
+                    except:
+                        continue
+            else:
+                # Original logic: use today's remaining hours or tomorrow
+                for i, t in enumerate(times):
+                    try:
+                        dt = datetime.strptime(t, "%Y-%m-%dT%H:%M")
+                        if dt >= now and start_hour <= dt.hour <= end_hour:
+                            filtered_indices.append(i)
+                    except:
+                        continue
+
+                # If no future hours match, just use tomorrow's window
+                if not filtered_indices:
+                    tomorrow = now + timedelta(days=1)
+                    for i, t in enumerate(times):
+                        try:
+                            dt = datetime.strptime(t, "%Y-%m-%dT%H:%M")
+                            if dt.date() == tomorrow.date() and start_hour <= dt.hour <= end_hour:
+                                filtered_indices.append(i)
+                        except:
+                            continue
+
+            if not filtered_indices:
+                return {"error": "No data for the selected time window"}
+
+            # Compute averages and dominant condition
+            avg_temp = round(sum(temps[i] for i in filtered_indices) / len(filtered_indices), 1)
+            avg_wind = round(sum(winds[i] for i in filtered_indices) / len(filtered_indices), 1)
+            avg_humidity = round(sum(humidity[i] for i in filtered_indices) / len(filtered_indices), 1)
+
+            # Count condition occurrences
+            condition_counts = {"sunny": 0, "pleasant": 0, "cold": 0, "rainy": 0, "windy": 0}
+            for i in filtered_indices:
+                code = codes[i]
+                cond = self.WMO_CONDITIONS.get(code, "sunny")
+                condition_counts[cond] += 1
+
+            # Override to cold if temperature is below 10°C regardless of code
+            if avg_temp < 10:
+                condition_counts["cold"] += len(filtered_indices)
+
+            # Override to windy if avg wind > 40 km/h
+            if avg_wind > 40:
+                condition_counts["windy"] += len(filtered_indices)
+
+            # Pleasant: sunny/clear with comfortable temp (15-30°C) and calm wind
+            if 15 <= avg_temp <= 30 and avg_wind < 25:
+                if condition_counts["sunny"] > 0 and condition_counts["rainy"] == 0 and condition_counts["windy"] == 0:
+                    condition_counts["pleasant"] += condition_counts["sunny"] + len(filtered_indices)
+                    condition_counts["sunny"] = 0
+
+            # Get dominant condition
+            dominant = max(condition_counts, key=condition_counts.get)
+            info = self.CONDITION_MESSAGES[dominant]
+
+            return {
+                "condition": dominant,
+                "label": info["label"],
+                "emoji": info["emoji"],
+                "message": info["message"],
+                "image": info["image"],
+                "temperature": avg_temp,
+                "wind_speed": avg_wind,
+                "humidity": avg_humidity,
+                "hours_analyzed": len(filtered_indices)
+            }
+
+        except Exception as e:
+            return {"error": str(e)}
