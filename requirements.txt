@@ -1,0 +1,9 @@
+Flask
+pandas
+numpy
+scikit-learn
+requests
+SQLAlchemy
+Flask-SQLAlchemy
+googlemaps
+python-dotenv
