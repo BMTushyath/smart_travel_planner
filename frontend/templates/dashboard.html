@@ -20,9 +20,19 @@
                         <input type="number" step="0.1" id="v-mileage" placeholder="Mileage (km/l or km/kWh)" required>
                     </div>
                     <div class="form-group">
+                        <label for="v-type">Vehicle Category</label>
                         <select id="v-type">
-                            <option value="fuel">Fuel (Petrol/Diesel)</option>
+                            <option value="fuel">Fuel (Petrol/Diesel/CNG)</option>
                             <option value="ev">Electric (EV)</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="v-fuel">Specific Fuel/Energy Type</label>
+                        <select id="v-fuel">
+                            <option value="petrol">Petrol</option>
+                            <option value="diesel">Diesel</option>
+                            <option value="cng">CNG</option>
+                            <option value="ev">Electricity (kWh)</option>
                         </select>
                     </div>
                     <button type="submit" class="btn-primary">Save Vehicle</button>
@@ -50,8 +60,15 @@
                         <input type="text" id="plan-start-loc" placeholder="Start Location" required>
                     </div>
                     <div class="form-group">
+                        <select id="plan-vehicle-id" required>
+                            <option value="" disabled selected>Select a Vehicle</option>
+                            <!-- Options populated via JS -->
+                        </select>
+                    </div>
+                    <div class="form-group">
                         <input type="text" id="plan-end-loc" placeholder="Destination" required>
                     </div>
+
                     <div class="form-group">
                         <label for="plan-date">Travel Date</label>
                         <input type="date" id="plan-date" required>
@@ -108,6 +125,7 @@
             <div class="card-body">
                 <p class="card-desc">Real-time alerts and smart alternatives for your travel.</p>
                 <div id="traffic-alert-content">
+                    <div id="date-insight-container" class="date-insight-box hidden"></div>
                     <div class="loader-placeholder">Calculate a route to see traffic insights.</div>
                 </div>
             </div>
@@ -129,7 +147,7 @@
         <!-- Option 6: Late Arrival Probability Score (LAPS) -->
         <div id="laps-card" class="card laps-card">
             <div class="card-header">
-                <h3><i class="fas fa-history"></i> LAPS (Late Arrival Risk)</h3>
+                <h3><i class="fas fa-exclamation-circle"></i> LAPS (Late Arrival Risk)</h3>
             </div>
             <div class="card-body">
                 <p class="card-desc">Late Arrival Probability Score — risk assessment per hour.</p>

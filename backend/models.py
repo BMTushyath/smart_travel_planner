@@ -21,6 +21,7 @@ class Vehicle(db.Model):
     name = db.Column(db.String(64))
     mileage = db.Column(db.Float)  # km/l or km/kWh
     vehicle_type = db.Column(db.String(20))  # 'fuel' or 'ev'
+    fuel_type = db.Column(db.String(20), default='petrol')  # 'petrol', 'diesel', 'cng', 'ev'
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'))
 
 class Trip(db.Model):

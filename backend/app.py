@@ -89,6 +89,7 @@ def vehicle_handler():
             name=data['name'],
             mileage=float(data['mileage']),
             vehicle_type=data['type'],
+            fuel_type=data.get('fuel_type', 'petrol'),
             user_id=session['user_id']
         )
         db.session.add(vehicle)
@@ -101,7 +102,8 @@ def vehicle_handler():
             'id': v.id,
             'name': v.name,
             'mileage': v.mileage,
-            'type': v.vehicle_type
+            'type': v.vehicle_type,
+            'fuel_type': v.fuel_type
         } for v in vehicles]
         return jsonify(vehicle_list)
 
@@ -141,12 +143,7 @@ def calculate_trip():
     # For now, we use a default city or could pass it from frontend
     prices = fuel_service.get_fuel_prices()
     
-    price_per_unit = 0
-    if vehicle.vehicle_type == 'ev':
-        price_per_unit = prices['ev']
-    elif vehicle.vehicle_type == 'fuel':
-        # Simplify: assume petrol for now or add fuel type to vehicle model
-        price_per_unit = prices['petrol'] 
+    price_per_unit = prices.get(vehicle.fuel_type, prices['petrol'])
     
     # Calculate cost: (Distance / Mileage) * Price
     fuel_needed = distance_km / vehicle.mileage
@@ -163,6 +160,8 @@ def calculate_trip():
 
 @app.route('/api/smart_plan', methods=['POST'])
 def smart_plan():
+    if 'user_id' not in session:
+        return jsonify({'error': 'Unauthorized'}), 401
     data = request.json
     start_hour = int(data['start_hour'])
     end_hour = int(data['end_hour'])
@@ -172,6 +171,14 @@ def smart_plan():
     
     if not origin or not destination:
          return jsonify({'error': 'Missing origin or destination for prediction'}), 400
+
+    # Fetch vehicle mileage if vehicle_id is provided
+    vehicle_id = data.get('vehicle_id')
+    mileage = 15.0 # Default fallback
+    if vehicle_id:
+        vehicle = Vehicle.query.get(vehicle_id)
+        if vehicle:
+            mileage = vehicle.mileage
 
     best_hour, avg_speed, traffic_level = tomtom_service.find_best_departure_time(origin, destination, start_hour, end_hour, target_date=target_date)
     
@@ -197,7 +204,7 @@ def smart_plan():
     depart_at = check_time.strftime("%Y-%m-%dT%H:%M:%S")
     
     # Request alternatives to skip traffic
-    route_data = tomtom_service.get_route(origin, destination, depart_at=depart_at, find_alt=True)
+    route_data = tomtom_service.get_route(origin, destination, depart_at=depart_at, find_alt=True, mileage=mileage)
     
     if "error" in route_data:
         return jsonify(route_data), 400
@@ -220,10 +227,9 @@ def smart_plan():
         "via_point": primary.get("via_point", "N/A"),
         "best_alt_time": time_str,
         "best_alt_speed": avg_speed,
-        "alt_route": {
-            "via_point": alternative.get("via_point") if alternative else None,
-            "duration": alternative.get("duration_formatted") if alternative else None
-        } if alternative else None,
+        "primary": primary,
+        "alternative": alternative,
+        "date_insights": route_data.get("date_insights"),
         "message": f"Based on real traffic data, the best time to leave is around {time_str}. Estimated average speed: {avg_speed} km/h."
     })
 
@@ -294,11 +300,25 @@ def laps():
     if not origin or not destination:
         return jsonify({'error': 'Missing origin or destination'}), 400
 
-    result = tomtom_service.calculate_laps(origin, destination, start_hour, end_hour, target_date=target_date)
+    # Fetch vehicle mileage if vehicle_id is provided
+    vehicle_id = data.get('vehicle_id')
+    mileage = 15.0 # Default fallback
+    if vehicle_id:
+        vehicle = Vehicle.query.get(vehicle_id)
+        if vehicle:
+            mileage = vehicle.mileage
+
+    result = tomtom_service.calculate_laps(origin, destination, start_hour, end_hour, target_date=target_date, mileage=mileage)
     if isinstance(result, dict) and 'error' in result:
         return jsonify(result), 400
     
     return jsonify(result)
+
+@app.route('/api/monitor', methods=['GET'])
+def monitor():
+    if 'user_id' not in session:
+        return jsonify({'error': 'Unauthorized'}), 401
+    return jsonify(tomtom_service.get_monitor_data())
 
 @app.route('/logout')
 def logout():

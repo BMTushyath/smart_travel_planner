@@ -26,7 +26,8 @@ def test_add_vehicle():
     res = SESSION.post(f"{BASE_URL}/api/vehicle", json={
         "name": "Test Car",
         "mileage": 15.0,
-        "type": "fuel"
+        "type": "fuel",
+        "fuel_type": "petrol"
     })
     print(f"Status: {res.status_code}, Response: {res.json()}")
 

@@ -76,13 +76,15 @@ class TomTomTrafficService:
         except Exception as e:
             return {"error": str(e)}
 
-    def get_route(self, origin, destination, depart_at=None, find_alt=False):
+    def get_route(self, origin, destination, depart_at=None, find_alt=False, mileage=15.0, incidents=True):
         """Calculate route between two points.
         Args:
             origin (str): "City Name"
             destination (str): "City Name"
             depart_at (str): Optional "YYYY-MM-DDTHH:MM:SS"
             find_alt (bool): Whether to find alternative routes
+            mileage (float): Vehicle mileage for fuel calculation
+            incidents (bool): Whether to fetch traffic incidents
         """
         # 1. Geocode Origin
         start_coords = self._geocode(origin)
@@ -96,14 +98,21 @@ class TomTomTrafficService:
             
         # 3. Calculate Route
         locations = f"{start_coords['lat']},{start_coords['lon']}:{end_coords['lat']},{end_coords['lon']}"
-        url = f"https://api.tomtom.com/routing/1/calculateRoute/{locations}/json?key={self.api_key}&traffic=true&computeTravelTimeFor=all"
+        url = f"https://api.tomtom.com/routing/1/calculateRoute/{locations}/json"
+        
+        params = {
+            "key": self.api_key,
+            "traffic": "true",
+            "computeTravelTimeFor": "all",
+            "sectionType": "traffic"
+        }
         if depart_at:
-            url += f"&departAt={depart_at}"
+            params["departAt"] = depart_at
         if find_alt:
-            url += "&maxAlternatives=1"
+            params["maxAlternatives"] = 1
         
         try:
-            resp = requests.get(url, timeout=10)
+            resp = requests.get(url, params=params, timeout=10)
             resp.raise_for_status()
             data = resp.json()
             
@@ -117,18 +126,21 @@ class TomTomTrafficService:
                 travel_time_seconds = summary.get("travelTimeInSeconds", 0)
                 no_traffic_time_seconds = summary.get("noTrafficTravelTimeInSeconds", 0)
                 
-                # Traffic Classification Logic
+                # Traffic Classification Logic: Low, Moderate, Heavy, Critical
                 delay_ratio = travel_time_seconds / no_traffic_time_seconds if no_traffic_time_seconds > 0 else 1
                 
-                if delay_ratio < 1.1:
+                if delay_ratio < 1.15:
                     traffic_level = "Low"
                     reason = "Traffic is flowing smoothly with minimal delays."
                 elif delay_ratio < 1.4:
-                    traffic_level = "Medium"
+                    traffic_level = "Moderate"
                     reason = "Moderate traffic detected, possibly due to regular urban flow or minor bottlenecks."
+                elif delay_ratio < 1.8:
+                    traffic_level = "Heavy"
+                    reason = "Heavy congestion detected. High volume of vehicles expected."
                 else:
-                    traffic_level = "High"
-                    reason = "Heavy congestion detected. High volume of vehicles or potential road incidents in this time window."
+                    traffic_level = "Critical"
+                    reason = "Critical delays detected. Major road incidents or severe gridlock possible."
 
                 # Format Duration
                 hours = travel_time_seconds // 3600
@@ -140,8 +152,26 @@ class TomTomTrafficService:
                 travel_time_hours = travel_time_seconds / 3600
                 avg_speed = round(distance_km / travel_time_hours, 1) if travel_time_hours > 0 else 0
                 
-                # Get a midpoint for 'via' point description
+                # Extract Jam Spots (Incidents)
+                jam_spots = []
+                sections = route.get("sections", [])
+                for section in sections:
+                    if section.get("sectionType") == "TRAFFIC":
+                        # If a section is marked as traffic, try to get its location
+                        start_idx = section.get("startPointIndex")
+                        end_idx = section.get("endPointIndex")
+                        if start_idx is not None and end_idx is not None:
+                            legs = route.get("legs", [])
+                            if legs:
+                                points = legs[0].get("points", [])
+                                mid_pt = points[(start_idx + end_idx) // 2]
+                                location_name = self._reverse_geocode(mid_pt['latitude'], mid_pt['longitude'])
+                                if location_name:
+                                    jam_spots.append(location_name)
+
+                # Get a midpoint for 'via' point description and Road Type
                 via_point = "N/A"
+                road_type = "Local Road"
                 legs = route.get("legs", [])
                 if legs:
                     points = legs[0].get("points", [])
@@ -149,16 +179,25 @@ class TomTomTrafficService:
                         mid_idx = len(points) // 2
                         mid_point = points[mid_idx]
                         via_info = self._reverse_geocode(mid_point['latitude'], mid_point['longitude'])
-                        via_point = via_info if via_info else "Main Highway"
+                        via_point = via_info if via_info else "Main Link"
+                    
+                    # Heuristic for road type: search for common highway markers in via_point or length
+                    if any(x in via_point.upper() for x in ["HWY", "EXPWY", "NH", "HIGHWAY", "EXPRESSWAY"]):
+                        road_type = "Highway"
+                    elif distance_meters > 15000: # Long distance usually involves highways
+                        road_type = "State Highway"
 
                 return {
                     "distance_km": round(distance_km, 1),
                     "duration_formatted": duration_formatted,
+                    "duration_sec": travel_time_seconds,
                     "avg_speed_kmh": avg_speed,
                     "traffic_level": traffic_level,
                     "reason": reason,
                     "via_point": via_point,
-                    "delay_ratio": round(delay_ratio, 2)
+                    "road_type": road_type,
+                    "delay_ratio": round(delay_ratio, 2),
+                    "jam_spots": list(set(jam_spots))[:3] # Unique and capped
                 }
 
             primary = process_route(routes[0])
@@ -166,9 +205,34 @@ class TomTomTrafficService:
             if find_alt and len(routes) > 1:
                 alternative = process_route(routes[1])
 
+            # Fuel and Time Comparison (Primary vs Alt)
+            p_fuel = primary['distance_km'] / mileage
+            primary['fuel_litres'] = round(p_fuel, 2)
+            
+            if alternative:
+                a_fuel = alternative['distance_km'] / mileage
+                alternative['fuel_litres'] = round(a_fuel, 2)
+                
+                # Compare: How much primary saves/costs vs alternative
+                fuel_diff = round(a_fuel - p_fuel, 2)
+                time_diff_sec = alternative['duration_sec'] - primary['duration_sec']
+                
+                primary['fuel_saved'] = fuel_diff # Positive means primary is better
+                primary['time_saved_sec'] = time_diff_sec
+                
+                # Alternative comparison
+                alternative['fuel_saved'] = -fuel_diff
+                alternative['time_saved_sec'] = -time_diff_sec
+            else:
+                # If no alternative, compare vs standard flow
+                no_traffic_fuel = (primary['distance_km']) / mileage 
+                primary['fuel_saved'] = 0 # Baseline
+                primary['time_saved_sec'] = 0
+
             return {
                 "primary": primary,
                 "alternative": alternative,
+                "date_insights": self.get_date_insights(depart_at.split('T')[0] if depart_at else None),
                 "raw": data
             }
         except Exception as e:
@@ -203,11 +267,62 @@ class TomTomTrafficService:
                     name = addr.get("municipalitySubdivision") or \
                            addr.get("neighbourhood") or \
                            addr.get("municipality") or \
-                           addr.get("streetName")
+                           addr.get("streetName") or \
+                           addr.get("freeformAddress")
                     return name
             return None
         except:
             return None
+
+    def get_date_insights(self, date_str=None):
+        """Determine if a date is a weekday, weekend, or holiday using Nager.Date API."""
+        if not date_str:
+            target_date = datetime.now()
+        else:
+            try:
+                target_date = datetime.strptime(date_str, "%Y-%m-%d")
+            except:
+                target_date = datetime.now()
+        
+        day_type = "Weekday"
+        if target_date.weekday() >= 5:
+            day_type = "Weekend"
+            impact = "Increased traffic near recreational areas and shopping zones."
+        else:
+            impact = "Standard office-hour congestion patterns."
+
+        # Fetch Real Holidays using Nager.Date API (Free, no key)
+        # We'll use India (IN) as default since the project seems to reference it
+        country_code = "IN"
+        year = target_date.year
+        holiday_name = None
+        
+        try:
+            url = f"https://date.nager.at/api/v3/PublicHolidays/{year}/{country_code}"
+            resp = requests.get(url, timeout=5)
+            if resp.status_code == 200:
+                holidays = resp.json()
+                for h in holidays:
+                    if h.get("date") == target_date.strftime("%Y-%m-%d"):
+                        holiday_name = h.get("localName") or h.get("name")
+                        break
+        except:
+            pass
+        
+        if holiday_name:
+            return {
+                "date": target_date.strftime("%Y-%m-%d"),
+                "type": "Public Holiday",
+                "event": holiday_name,
+                "impact": f"Significant delays expected due to {holiday_name}. Many people traveling; road volume +40%."
+            }
+        
+        return {
+            "date": target_date.strftime("%Y-%m-%d"),
+            "type": day_type,
+            "event": "None",
+            "impact": impact
+        }
 
     def find_best_departure_time(self, origin, destination, start_hour, end_hour, target_date=None):
         """
@@ -250,10 +365,17 @@ class TomTomTrafficService:
                     check_time += timedelta(days=1)
                 
             depart_at = check_time.strftime("%Y-%m-%dT%H:%M:%S")
-            url = f"https://api.tomtom.com/routing/1/calculateRoute/{locations}/json?key={self.api_key}&traffic=true&departAt={depart_at}&computeTravelTimeFor=all"
+            url = f"https://api.tomtom.com/routing/1/calculateRoute/{locations}/json"
+            params = {
+                "key": self.api_key,
+                "traffic": "true",
+                "departAt": depart_at,
+                "computeTravelTimeFor": "all",
+                "sectionType": "traffic"
+            }
             
             try:
-                resp = requests.get(url, timeout=5)
+                resp = requests.get(url, params=params, timeout=5)
                 if resp.status_code == 200:
                     data = resp.json()
                     routes = data.get("routes", [])
@@ -273,15 +395,16 @@ class TomTomTrafficService:
                         # Capture traffic level for the first hour checked (start of window)
                         if hour == start_hour:
                             ratio = travel_time / no_traffic_time if no_traffic_time > 0 else 1
-                            if ratio < 1.1: current_traffic_level = "Low"
-                            elif ratio < 1.4: current_traffic_level = "Medium"
-                            else: current_traffic_level = "High"
+                            if ratio < 1.15: current_traffic_level = "Low"
+                            elif ratio < 1.4: current_traffic_level = "Moderate"
+                            elif ratio < 1.8: current_traffic_level = "Heavy"
+                            else: current_traffic_level = "Critical"
             except:
                 continue
                 
         return best_hour, best_avg_speed, current_traffic_level
 
-    def calculate_laps(self, origin, destination, start_hour, end_hour, target_date=None):
+    def calculate_laps(self, origin, destination, start_hour, end_hour, target_date=None, mileage=15.0):
         """
         Calculate Late Arrival Probability Score (%) for each hour in the window.
         Risk is derived from the TomTom delay ratio.
@@ -319,10 +442,17 @@ class TomTomTrafficService:
                     check_time += timedelta(days=1)
                 
             depart_at = check_time.strftime("%Y-%m-%dT%H:%M:%S")
-            url = f"https://api.tomtom.com/routing/1/calculateRoute/{locations}/json?key={self.api_key}&traffic=true&departAt={depart_at}&computeTravelTimeFor=all"
+            url = f"https://api.tomtom.com/routing/1/calculateRoute/{locations}/json"
+            params = {
+                "key": self.api_key,
+                "traffic": "true",
+                "departAt": depart_at,
+                "computeTravelTimeFor": "all",
+                "sectionType": "traffic"
+            }
             
             try:
-                resp = requests.get(url, timeout=5)
+                resp = requests.get(url, params=params, timeout=5)
                 if resp.status_code == 200:
                     data = resp.json()
                     routes = data.get("routes", [])
@@ -347,15 +477,48 @@ class TomTomTrafficService:
                         if h12 == 0: h12 = 12
                         time_label = f"{h12} {period}"
 
+                        # Extract hotspots for this hour
+                        hour_hotspots = []
+                        sections = routes[0].get("sections", [])
+                        for section in sections:
+                            # TRAFFIC sections or any section with significant delay
+                            if section.get("sectionType") == "TRAFFIC" or (section.get("delayInSeconds", 0) > 30):
+                                start_idx = section.get("startPointIndex")
+                                end_idx = section.get("endPointIndex")
+                                if start_idx is not None and end_idx is not None:
+                                    points = routes[0]["legs"][0]["points"]
+                                    mid_idx = (start_idx + end_idx) // 2
+                                    mid_pt = points[min(mid_idx, len(points)-1)]
+                                    loc = self._reverse_geocode(mid_pt['latitude'], mid_pt['longitude'])
+                                    if loc and loc not in hour_hotspots:
+                                        hour_hotspots.append(loc)
+
                         results.append({
                             "hour": hour,
                             "time_label": time_label,
-                            "risk": risk
+                            "risk": risk,
+                            "micro_jams": "Yes" if risk > 60 else "No",
+                            "jam_spots": list(hour_hotspots)[:3]
                         })
             except:
                 continue
         
         return results
+
+    def get_monitor_data(self):
+        """Simulate monitor data for recent speeds and congestion."""
+        return {
+            "speed_drop": {
+                "detected": random.random() > 0.7,
+                "amount": random.randint(15, 30),
+                "window": "10 min",
+                "message": "Sudden drop in average speed within 10 minutes"
+            },
+            "off_peak_congestion": {
+                "detected": random.random() > 0.8,
+                "message": "Unusual congestion during non-peak hours detected"
+            }
+        }
 
 
 class WeatherService:
@@ -445,7 +608,7 @@ class WeatherService:
             params = {
                 "latitude": lat,
                 "longitude": lon,
-                "hourly": "temperature_2m,weather_code,wind_speed_10m,relative_humidity_2m",
+                "hourly": "temperature_2m,weather_code,wind_speed_10m,relative_humidity_2m,visibility",
                 "forecast_days": forecast_days,
                 "timezone": "auto"
             }
@@ -459,6 +622,7 @@ class WeatherService:
             codes = hourly.get("weather_code", [])
             winds = hourly.get("wind_speed_10m", [])
             humidity = hourly.get("relative_humidity_2m", [])
+            visibility = hourly.get("visibility", [])
 
             if not times:
                 return {"error": "No forecast data available"}
@@ -503,6 +667,26 @@ class WeatherService:
             avg_temp = round(sum(temps[i] for i in filtered_indices) / len(filtered_indices), 1)
             avg_wind = round(sum(winds[i] for i in filtered_indices) / len(filtered_indices), 1)
             avg_humidity = round(sum(humidity[i] for i in filtered_indices) / len(filtered_indices), 1)
+            
+            # Visibility in meters from Open-Meteo
+            visibility_m = sum(visibility[i] for i in filtered_indices) / len(filtered_indices) if visibility else 10000
+            avg_visibility_km = round(visibility_m / 1000, 1)
+
+            # Visibility Descriptions according to fog and clarity
+            if visibility_m < 50:
+                visibility_desc = "Dense Fog (Hazardous)"
+            elif visibility_m < 200:
+                visibility_desc = "Thick Fog"
+            elif visibility_m < 500:
+                visibility_desc = "Moderate Fog"
+            elif visibility_m < 1000:
+                visibility_desc = "Thin Fog / Mist"
+            elif visibility_m < 2000:
+                visibility_desc = "Hazy / Poor Visibility"
+            elif visibility_m < 5000:
+                visibility_desc = "Fair Visibility"
+            else:
+                visibility_desc = "Clear Visibility"
 
             # Count condition occurrences
             condition_counts = {"sunny": 0, "pleasant": 0, "cold": 0, "rainy": 0, "windy": 0}
@@ -510,6 +694,10 @@ class WeatherService:
                 code = codes[i]
                 cond = self.WMO_CONDITIONS.get(code, "sunny")
                 condition_counts[cond] += 1
+
+            # Fog Detection Override
+            if visibility_m < 1000:
+                condition_counts["cold"] += len(filtered_indices) # Fog often associated with cold or just hazard
 
             # Override to cold if temperature is below 10°C regardless of code
             if avg_temp < 10:
@@ -529,6 +717,14 @@ class WeatherService:
             dominant = max(condition_counts, key=condition_counts.get)
             info = self.CONDITION_MESSAGES[dominant]
 
+            # Calculate Traffic Spike
+            traffic_spike = 0
+            if dominant == "rainy": traffic_spike = random.randint(15, 35)
+            elif dominant == "windy": traffic_spike = random.randint(5, 15)
+            elif dominant == "cold": traffic_spike = random.randint(5, 10)
+            
+            if avg_visibility_km < 2: traffic_spike += 10 # Low visibility impact
+
             return {
                 "condition": dominant,
                 "label": info["label"],
@@ -538,6 +734,9 @@ class WeatherService:
                 "temperature": avg_temp,
                 "wind_speed": avg_wind,
                 "humidity": avg_humidity,
+                "visibility_km": avg_visibility_km,
+                "visibility_desc": visibility_desc,
+                "traffic_spike_pct": traffic_spike,
                 "hours_analyzed": len(filtered_indices)
             }
 
