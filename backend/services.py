@@ -63,9 +63,10 @@ class TomTomTrafficService:
         Returns:
             dict with travelTimeSec and congestionLevel or error.
         """
-        url = f"{self.base_url}/{origin}/{destination}/json?key={self.api_key}"
+        url = f"{self.base_url}/{origin}/{destination}/json"
+        params = {"key": self.api_key}
         try:
-            resp = requests.get(url, timeout=10)
+            resp = requests.get(url, params=params, timeout=10)
             resp.raise_for_status()
             data = resp.json()
             flow = data.get("flowSegmentData", {})
@@ -240,9 +241,13 @@ class TomTomTrafficService:
 
     def _geocode(self, query):
         """Geocode a place name to lat,lon using TomTom Search API."""
-        url = f"https://api.tomtom.com/search/2/search/{query}.json?key={self.api_key}&limit=1"
+        url = f"https://api.tomtom.com/search/2/search/{requests.utils.quote(query)}.json"
+        params = {
+            "key": self.api_key,
+            "limit": 1
+        }
         try:
-            resp = requests.get(url, timeout=10)
+            resp = requests.get(url, params=params, timeout=10)
             resp.raise_for_status()
             data = resp.json()
             results = data.get("results", [])
@@ -255,9 +260,10 @@ class TomTomTrafficService:
 
     def _reverse_geocode(self, lat, lon):
         """Reverse geocode coordinates to a place/street name."""
-        url = f"https://api.tomtom.com/search/2/reverseGeocode/{lat},{lon}.json?key={self.api_key}"
+        url = f"https://api.tomtom.com/search/2/reverseGeocode/{lat},{lon}.json"
+        params = {"key": self.api_key}
         try:
-            resp = requests.get(url, timeout=5)
+            resp = requests.get(url, params=params, timeout=5)
             if resp.status_code == 200:
                 data = resp.json()
                 addresses = data.get("addresses", [])
