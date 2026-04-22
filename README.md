@@ -8,6 +8,9 @@ Krivox is a smart travel planning application that helps users find the best tim
 - **Real-Time Routing**: Uses TomTom API for accurate distance and duration.
 - **Fuel/EV Predictor**: Estimates travel costs and fuel/charge needs.
 - **Vehicle Management**: Manage your vehicles and their mileage/efficiency.
+- **Native Guru**: Gives Local insights, Fuel Efficiency and alternative routes.
+- **Weather Report**: Gives weather predictions if the days until travel is less than or equal to 3.
+- **Late Arrival Prediction system (LAPS)**: Predicts the density of traffic for each hour in the given time window. 
 
 ## Setup Instructions (For New Laptop)
 
